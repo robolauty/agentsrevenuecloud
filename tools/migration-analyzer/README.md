@@ -17,7 +17,9 @@ extract_sbqq.py         → vuelca el catálogo SBQQ a JSON crudo (1 fichero/obj
         ↓
 adapt_sbqq_to_canonical.py → normaliza al modelo canónico (schema/)
         ↓
-[pendiente] análisis de gaps con LLM sobre el canónico
+classify_gaps.py        → clasifica direct/transformable/redesign; deja lo ambiguo en review_queue.json
+        ↓
+agente revenue-cloud-cpq-migration → resuelve review_queue.json y cierra el manifiesto
         ↓
 [pendiente] generador de carga hacia Revenue Cloud
 ```
@@ -50,10 +52,34 @@ python3 scripts/adapt_sbqq_to_canonical.py \
     --raw output/cliente-sandbox/raw \
     --out output/cliente-sandbox/canonical.json \
     --org-alias cliente-sandbox
+
+# 5. Clasificar direct/transformable/redesign con reglas deterministas
+python3 scripts/classify_gaps.py \
+    --canonical output/cliente-sandbox/canonical.json \
+    --out output/cliente-sandbox/canonical.classified.json \
+    --review-out output/cliente-sandbox/review_queue.json \
+    --report-out output/cliente-sandbox/gap_report.md
 ```
 
-El resultado (`canonical.json`) sigue `schema/canonical_catalog.schema.json`
-y es la entrada para el análisis de gaps (siguiente etapa, ver abajo).
+El resultado (`canonical.json`) sigue `schema/canonical_catalog.schema.json`.
+`classify_gaps.py` lo recorre aplicando las reglas de
+`docs/mapping-sbqq-rlm.md` y produce tres salidas:
+
+- `canonical.classified.json` — el mismo canónico, con `migration` relleno
+  en cada entidad.
+- `review_queue.json` — lo que no se pudo clasificar con una regla fija
+  (precios sin `charge_type` determinado, price/product rules, cualquier
+  cosa en `unmapped`). Cada entrada trae el registro completo para que se
+  pueda revisar sin volver a mirar el crudo.
+- `gap_report.md` — resumen en Markdown con el conteo por clasificación y
+  los próximos pasos.
+
+`review_queue.json` es la entrada del **agente `revenue-cloud-cpq-migration`**
+(disponible como subagente en Claude Code sobre este repo): revisa cada
+elemento con criterio, resuelve la clasificación con su justificación y
+construye la matriz de transformación y el manifiesto que pide
+`agents/revenue-cloud-cpq-migration.md`. El script no reemplaza ese
+análisis — reduce el volumen a lo que de verdad requiere juicio.
 
 `output/` está en `.gitignore` — el catálogo de un cliente no se commitea.
 
@@ -96,13 +122,23 @@ attributes vía JSON en vez de registros separados, OmniScripts para la
 configuración). Se añade como `extract_epc.py` +
 `adapt_epc_to_canonical.py` siguiendo el mismo patrón cuando haga falta.
 
-## Siguiente etapa: informe de gaps
+**`classify_gaps.py`**
+- Aplica las reglas de `docs/mapping-sbqq-rlm.md` (documento editable, no
+  código): bundle→`transformable` con nota de rediseño de agrupamiento,
+  `SBQQ__ProductOption__c`→`redesign` siempre, precio con `charge_type`
+  desconocido→`review`, price/product rules y promociones→`review` siempre
+  (no hay regla determinista segura para lógica arbitraria).
+- Nunca decide `direct` para algo que en realidad requiere criterio: ante
+  la duda, clasifica `review` en vez de adivinar.
+- Verificado con un canónico sintético de 8 elementos antes de dejarlo en
+  el repo (2 direct, 3 transformable, 1 redesign, 2 review) — no probado
+  todavía contra datos reales de un org.
 
-Con `canonical.json` en mano, el paso que falta por construir es el que
-recorre cada entidad y decide `direct` / `transformable` / `redesign`,
-usando el LLM para lo ambiguo (bundles con lógica implícita, reglas en
-Apex, atributos que son en realidad variantes) y reglas fijas para lo que
-tiene mapeo directo. Ese análisis debe seguir las reglas de
-`agents/revenue-cloud-cpq-migration.md` (no asumir equivalencias 1:1,
-separar datos maestros/transaccionales/históricos, señalar riesgos de
-pérdida de comportamiento).
+## Siguiente etapa: generador de carga
+
+Con el manifiesto de migración cerrado (agente `revenue-cloud-cpq-migration`
+sobre `review_queue.json` + `canonical.classified.json`), falta el paso que
+genera los CSV/JSON de carga hacia Revenue Cloud, ordenados por dependencias
+(categorías → atributos → productos → selling models → bundles/componentes
+→ pricebook entries → ajustes de precio), para cargar con Data Loader,
+`sf data import` o Composite API — primero siempre en sandbox.

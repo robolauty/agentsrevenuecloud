@@ -32,12 +32,23 @@ Usar cuando exista un org Salesforce CPQ, datos CPQ, automatizaciones o integrac
 ## Herramienta
 
 El inventario y la clasificación no deben inferirse a ciegas: para un org
-real, ejecutar primero `tools/migration-analyzer/` (ver su README). Extrae
-el catálogo del org de origen (solo lectura), lo normaliza a un modelo
-canónico independiente de CPQ/Industries/Revenue Cloud, y deja cada
-elemento listo para clasificar como `direct` / `transformable` /
-`redesign`. El agente construye el informe de gaps y las decisiones sobre
-ese canónico, no repitiendo la extracción desde cero en cada análisis.
+real, ejecutar primero `tools/migration-analyzer/` (ver su README). El flujo:
+
+1. `discover.py` + `extract_sbqq.py` + `adapt_sbqq_to_canonical.py` —
+   extraen el catálogo del org de origen (solo lectura) y lo normalizan a
+   un modelo canónico independiente de CPQ/Industries/Revenue Cloud.
+2. `classify_gaps.py` — aplica las reglas deterministas de
+   `tools/migration-analyzer/docs/mapping-sbqq-rlm.md` (lo que tiene
+   mapeo claro) y deja el resto en `review_queue.json`.
+3. **Este agente resuelve `review_queue.json`**: cada elemento ahí no
+   tiene regla determinista segura (price/product rules, precios sin
+   charge_type claro, bundles con lógica implícita, Apex custom). El
+   agente decide destino, transformación, gap y criterio de validación
+   para cada uno, con la justificación que pide `## Reglas`, y con eso
+   cierra la matriz de transformación y el manifiesto de migración.
+
+El agente no repite la extracción ni reclasifica lo que ya tiene regla
+clara — se concentra en lo que de verdad requiere criterio.
 
 ## Fuente
 
