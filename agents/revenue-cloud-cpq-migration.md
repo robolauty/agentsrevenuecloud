@@ -44,11 +44,17 @@ real, ejecutar primero `tools/migration-analyzer/` (ver su README). El flujo:
    tiene regla determinista segura (price/product rules, precios sin
    charge_type claro, bundles con lógica implícita, Apex custom). El
    agente decide destino, transformación, gap y criterio de validación
-   para cada uno, con la justificación que pide `## Reglas`, y con eso
-   cierra la matriz de transformación y el manifiesto de migración.
+   para cada uno, con la justificación que pide `## Reglas`, marca
+   `reviewed_by_human: true` en el canónico, y con eso cierra la matriz
+   de transformación y el manifiesto de migración.
+4. `generate_load.py` — con el manifiesto cerrado, genera la carga
+   (SObject Tree + plan.json) hacia Revenue Cloud, pero **solo** con lo
+   que quedó `reviewed_by_human: true`. Nada se carga sin haber pasado
+   por este agente primero.
 
 El agente no repite la extracción ni reclasifica lo que ya tiene regla
-clara — se concentra en lo que de verdad requiere criterio.
+clara — se concentra en lo que de verdad requiere criterio, y su
+resolución es la que habilita que algo llegue a cargarse.
 
 ## Fuente
 

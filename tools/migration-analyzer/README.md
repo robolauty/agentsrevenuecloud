@@ -19,9 +19,11 @@ adapt_sbqq_to_canonical.py → normaliza al modelo canónico (schema/)
         ↓
 classify_gaps.py        → clasifica direct/transformable/redesign; deja lo ambiguo en review_queue.json
         ↓
-agente revenue-cloud-cpq-migration → resuelve review_queue.json y cierra el manifiesto
+agente revenue-cloud-cpq-migration → resuelve review_queue.json y marca reviewed_by_human=true
         ↓
-[pendiente] generador de carga hacia Revenue Cloud
+generate_load.py        → genera SObject Tree + plan.json solo con lo revisado y aprobado
+        ↓
+sf data import tree --plan plan.json --target-org <sandbox>
 ```
 
 Todo lo que toca el org es **solo lectura**. Nada de esto escribe en
@@ -59,6 +61,16 @@ python3 scripts/classify_gaps.py \
     --out output/cliente-sandbox/canonical.classified.json \
     --review-out output/cliente-sandbox/review_queue.json \
     --report-out output/cliente-sandbox/gap_report.md
+
+# 6. Tras resolver review_queue.json (agente/humano) y marcar
+#    reviewed_by_human=true en canonical.classified.json, generar la carga
+python3 scripts/generate_load.py \
+    --canonical output/cliente-sandbox/canonical.classified.json \
+    --mapping config/load_mapping.json \
+    --out output/cliente-sandbox/load
+
+# 7. Solo contra sandbox
+sf data import tree --plan output/cliente-sandbox/load/plan.json --target-org cliente-sandbox
 ```
 
 El resultado (`canonical.json`) sigue `schema/canonical_catalog.schema.json`.
@@ -113,15 +125,6 @@ análisis — reduce el volumen a lo que de verdad requiere juicio.
   precio/producto, que mezclan configuración declarativa con lógica en
   fórmulas o Apex.
 
-## Adaptador de Industries CPQ/EPC
-
-Todavía no implementado. Si el origen es Industries (`vlocity_cmt__`),
-`discover.py` lo señala pero no hay extractor específico: los objetos y la
-API difieren bastante de SBQQ (DataPacks, `vlocity_cmt__Product2`
-attributes vía JSON en vez de registros separados, OmniScripts para la
-configuración). Se añade como `extract_epc.py` +
-`adapt_epc_to_canonical.py` siguiendo el mismo patrón cuando haga falta.
-
 **`classify_gaps.py`**
 - Aplica las reglas de `docs/mapping-sbqq-rlm.md` (documento editable, no
   código): bundle→`transformable` con nota de rediseño de agrupamiento,
@@ -134,11 +137,55 @@ configuración). Se añade como `extract_epc.py` +
   el repo (2 direct, 3 transformable, 1 redesign, 2 review) — no probado
   todavía contra datos reales de un org.
 
-## Siguiente etapa: generador de carga
+**`generate_load.py`**
+- Genera ficheros en formato [SObject Tree](https://developer.salesforce.com/docs/atlas.en-us.api_rest.meta/api_rest/resources_composite_tree_sobject_collections.htm)
+  (`01_ProductCategory.json`, `02_Product2.json`, ...) + un `plan.json`
+  para `sf data import tree`. Las relaciones (producto→categoría,
+  precio→producto/pricebook) se resuelven por referencia (`@ref`), sin
+  necesitar campos de external id en el destino.
+- **Solo incluye lo que ya pasó por revisión**: exige
+  `classification in (direct, transformable)` Y `reviewed_by_human == true`
+  en cada elemento. Todo lo demás queda fuera y listado en
+  `load_summary.md` con el motivo — no se descarta en silencio ni se
+  fuerza una carga de algo no aprobado.
+- Los componentes de bundle (`ProductRelatedComponent`) **nunca** se
+  generan aquí: `classify_gaps.py` los marca siempre `redesign`, y ese
+  rediseño es una decisión de agrupamiento (`ProductComponentGroup`) que
+  toma el agente/humano en el manifiesto, no este script.
+- `ProductSellingModel` solo se genera con `--include-selling-models`, y
+  aun así queda marcado en el resumen como "requiere validación manual":
+  SBQQ no tiene un dato equivalente, así que el tipo (`Evergreen`,
+  `OneTime`, ...) es una inferencia sobre `selling_model` del canónico,
+  no un valor migrado.
+- Los nombres de objeto/campo del destino viven en
+  `config/load_mapping.json`, no hardcodeados en el script. Los bloques
+  marcados `"verify": true` (selling models, `ProductCategoryProduct`,
+  componentes) dependen de la versión de Revenue Cloud del org destino:
+  **contrastar contra `sf sobject describe` del destino antes de una
+  carga real**, no asumir que el nombre de campo es correcto.
+- Verificado con el mismo canónico sintético (tras simular
+  `reviewed_by_human=true` en lo aprobado): generó `ProductCategory`,
+  `Product2`, `Pricebook2`, `PricebookEntry` y omitió correctamente el
+  precio con `charge_type` desconocido, listándolo en `load_summary.md`.
 
-Con el manifiesto de migración cerrado (agente `revenue-cloud-cpq-migration`
-sobre `review_queue.json` + `canonical.classified.json`), falta el paso que
-genera los CSV/JSON de carga hacia Revenue Cloud, ordenados por dependencias
-(categorías → atributos → productos → selling models → bundles/componentes
-→ pricebook entries → ajustes de precio), para cargar con Data Loader,
-`sf data import` o Composite API — primero siempre en sandbox.
+## Adaptador de Industries CPQ/EPC
+
+Todavía no implementado. Si el origen es Industries (`vlocity_cmt__`),
+`discover.py` lo señala pero no hay extractor específico: los objetos y la
+API difieren bastante de SBQQ (DataPacks, `vlocity_cmt__Product2`
+attributes vía JSON en vez de registros separados, OmniScripts para la
+configuración). Se añade como `extract_epc.py` +
+`adapt_epc_to_canonical.py` siguiendo el mismo patrón cuando haga falta.
+
+## Siguiente etapa: PriceAdjustmentSchedule y componentes de bundle
+
+`generate_load.py` cubre catálogo básico y precio simple. Quedan fuera,
+como siguiente pieza a construir:
+
+- Tramos de precio (`tiers` del canónico) → `PriceAdjustmentSchedule` /
+  `PriceAdjustmentTier`.
+- Componentes de bundle, una vez que el manifiesto de migración defina el
+  agrupamiento en `ProductComponentGroup` (no hay forma determinista de
+  generarlo sin esa decisión).
+- Atributos (`SBQQ__ConfigurationAttribute__c` → `AttributeDefinition`),
+  todavía no extraídos a fondo por `extract_sbqq.py`.

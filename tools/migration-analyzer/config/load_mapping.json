@@ -1,0 +1,97 @@
+{
+  "_readme": "Mapeo canónico -> objetos y campos de Revenue Cloud (destino). Cada bloque tiene 'verify: true' en los campos cuyo nombre exacto depende de la versión de Revenue Cloud del org destino: contrastar contra 'sf sobject describe' del destino y la documentación vigente ANTES de correr generate_load.py de verdad. No asumir que esto es correcto a ciegas.",
+
+  "category": {
+    "object": "ProductCategory",
+    "verify": false,
+    "fields": {
+      "name": "Name",
+      "parent_id": "ParentCategoryId"
+    }
+  },
+
+  "product": {
+    "object": "Product2",
+    "verify": false,
+    "fields": {
+      "name": "Name",
+      "code": "ProductCode",
+      "description": "Description",
+      "active": "IsActive",
+      "family": "Family"
+    },
+    "_notes": "Campos estándar, estables entre releases. El vínculo con ProductCategory se hace vía ProductCategoryProduct (objeto de unión), no un campo directo en Product2 — ver 'category_assignment' más abajo."
+  },
+
+  "category_assignment": {
+    "object": "ProductCategoryProduct",
+    "verify": true,
+    "fields": {
+      "category_ref": "ProductCategoryId",
+      "product_ref": "ProductId"
+    },
+    "_notes": "Objeto de unión producto-categoría. Confirmar nombre exacto y si el org destino usa catálogo único o multi-catálogo (ProductCatalog) antes de cargar."
+  },
+
+  "selling_model": {
+    "object": "ProductSellingModel",
+    "verify": true,
+    "fields": {
+      "name": "Name",
+      "selling_model_type": "SellingModelType",
+      "status": "Status"
+    },
+    "default_values": {
+      "selling_model_type_if_recurring": "Evergreen",
+      "selling_model_type_if_one_time": "OneTime"
+    },
+    "_notes": "ES EL BLOQUE MÁS SENSIBLE A LA VERSIÓN DE REVENUE CLOUD. SBQQ no tiene un objeto equivalente directo: 'recurring'/'one_time'/'usage'/'term' del canónico es una INFERENCIA, no un dato migrado. Revisar con el cliente qué selling models existen realmente antes de generar esto — no cargar valores por defecto sin validar. generate_load.py marca cada registro con needs_review=true en vez de asumir el tipo."
+  },
+
+  "product_selling_model_relation": {
+    "object": "ProductSellingModelOption",
+    "verify": true,
+    "fields": {
+      "product_ref": "Product2Id",
+      "selling_model_ref": "ProductSellingModelId"
+    },
+    "_notes": "Nombre de objeto a confirmar; ha cambiado entre releases de Revenue Cloud."
+  },
+
+  "pricebook": {
+    "object": "Pricebook2",
+    "verify": false,
+    "fields": {
+      "name": "Name",
+      "active": "IsActive",
+      "is_standard": "IsStandard"
+    }
+  },
+
+  "price": {
+    "object": "PricebookEntry",
+    "verify": false,
+    "fields": {
+      "product_ref": "Product2Id",
+      "pricebook_ref": "Pricebook2Id",
+      "amount": "UnitPrice",
+      "active": "IsActive"
+    },
+    "_notes": "PricebookEntry en sí es estable. Los tramos de precio (tiers) NO se cargan aquí: van a PriceAdjustmentSchedule/PriceAdjustmentTier, fuera del alcance de este generador hasta validar esos objetos."
+  },
+
+  "component": {
+    "object": "ProductRelatedComponent",
+    "verify": true,
+    "fields": {
+      "parent_product_ref": "ParentProductId",
+      "child_product_ref": "ChildProductId",
+      "component_group_ref": "ProductComponentGroupId",
+      "min_quantity": "MinQuantity",
+      "max_quantity": "MaxQuantity",
+      "default_quantity": "Quantity",
+      "is_default": "IsDefaultComponent"
+    },
+    "_notes": "Siempre clasificado 'redesign' por classify_gaps.py: requiere decidir el agrupamiento (ProductComponentGroup) antes de poder generar esta carga. No se genera automáticamente — ver README."
+  }
+}
