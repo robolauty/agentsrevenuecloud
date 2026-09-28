@@ -29,6 +29,16 @@ Usar cuando exista un org Salesforce CPQ, datos CPQ, automatizaciones o integrac
 - Plan de pruebas, reconciliación y rollback.
 - Riesgos, dependencias y preguntas abiertas.
 
+## Herramienta
+
+El inventario y la clasificación no deben inferirse a ciegas: para un org
+real, ejecutar primero `tools/migration-analyzer/` (ver su README). Extrae
+el catálogo del org de origen (solo lectura), lo normaliza a un modelo
+canónico independiente de CPQ/Industries/Revenue Cloud, y deja cada
+elemento listo para clasificar como `direct` / `transformable` /
+`redesign`. El agente construye el informe de gaps y las decisiones sobre
+ese canónico, no repitiendo la extracción desde cero en cada análisis.
+
 ## Fuente
 
 Leer `AGENTS.md` y `docs/demo-revenue-cloud-industrial-b2b.md` antes de trabajar.

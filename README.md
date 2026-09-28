@@ -197,7 +197,13 @@ Fabricación, calidad, logística, DRO y Billing por uso están fuera de alcance
 
 ## Estado del repositorio
 
-Actualmente el repositorio contiene documentación funcional y reglas de agentes. No hay código de aplicación, manifests de dependencias, pipeline CI, comandos de build o suite de tests verificables.
+El repositorio contiene documentación funcional, reglas de agentes y una
+primera herramienta técnica en `tools/migration-analyzer/`: extrae el
+catálogo de un org Salesforce CPQ (SBQQ), lo normaliza a un modelo
+canónico y deja la base para el informe de gaps del Agente de Migración
+CPQ a Revenue Cloud. El adaptador de Industries CPQ/EPC y el análisis de
+gaps en sí todavía no están implementados. No hay manifests de
+dependencias, pipeline CI ni suite de tests automatizada.
 
 ## Uso con Claude y OpenCode
 

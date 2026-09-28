@@ -1,0 +1,9 @@
+# Datos extraídos de orgs de clientes: nunca se commitean.
+tools/migration-analyzer/output/
+
+# Python
+__pycache__/
+*.pyc
+
+# OS
+.DS_Store

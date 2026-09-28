@@ -1,0 +1,248 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Canonical Catalog Model",
+  "description": "Modelo intermedio independiente del origen (SBQQ, Industries EPC...) y del destino (Revenue Cloud). Cada elemento conserva su referencia al origen y su clasificación de migración.",
+  "type": "object",
+  "required": ["meta", "products"],
+  "properties": {
+    "meta": {
+      "type": "object",
+      "required": ["schema_version", "source_system", "extracted_at"],
+      "properties": {
+        "schema_version": { "type": "string", "examples": ["0.1.0"] },
+        "source_system": { "enum": ["SBQQ", "INDUSTRIES_EPC", "REVENUE_CLOUD", "OTHER"] },
+        "source_version": { "type": "string", "description": "Versión del paquete instalado, si se detecta" },
+        "org_alias": { "type": "string" },
+        "org_type": { "enum": ["production", "sandbox", "scratch", "unknown"] },
+        "extracted_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "catalogs": { "type": "array", "items": { "$ref": "#/$defs/catalog" } },
+    "categories": { "type": "array", "items": { "$ref": "#/$defs/category" } },
+    "attributes": { "type": "array", "items": { "$ref": "#/$defs/attribute" } },
+    "products": { "type": "array", "items": { "$ref": "#/$defs/product" } },
+    "pricebooks": { "type": "array", "items": { "$ref": "#/$defs/pricebook" } },
+    "prices": { "type": "array", "items": { "$ref": "#/$defs/price" } },
+    "rules": { "type": "array", "items": { "$ref": "#/$defs/rule" } },
+    "promotions": { "type": "array", "items": { "$ref": "#/$defs/promotion" } },
+    "unmapped": {
+      "type": "array",
+      "description": "Lógica u objetos sin equivalente claro. Se conservan, nunca se descartan.",
+      "items": { "$ref": "#/$defs/unmapped_item" }
+    }
+  },
+  "$defs": {
+    "source_ref": {
+      "type": "object",
+      "required": ["system", "object", "record_id"],
+      "properties": {
+        "system": { "type": "string" },
+        "object": { "type": "string", "description": "API name del objeto origen, p. ej. SBQQ__ProductOption__c" },
+        "record_id": { "type": "string" },
+        "raw": { "type": "object", "description": "Campos originales relevantes, sin transformar" }
+      }
+    },
+    "migration": {
+      "type": "object",
+      "required": ["classification"],
+      "properties": {
+        "classification": {
+          "enum": ["direct", "transformable", "redesign", "not_migrated", "pending"],
+          "description": "direct: mapeo 1:1; transformable: requiere transformación; redesign: sin equivalente, hay que rediseñar"
+        },
+        "target_object": { "type": "string", "description": "Objeto destino en Revenue Cloud, si aplica" },
+        "effort": { "enum": ["low", "medium", "high", "unknown"] },
+        "notes": { "type": "string" },
+        "reviewed_by_human": { "type": "boolean", "default": false }
+      }
+    },
+    "catalog": {
+      "type": "object",
+      "required": ["id", "name", "source"],
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "active": { "type": "boolean" },
+        "source": { "$ref": "#/$defs/source_ref" },
+        "migration": { "$ref": "#/$defs/migration" }
+      }
+    },
+    "category": {
+      "type": "object",
+      "required": ["id", "name", "source"],
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "parent_id": { "type": ["string", "null"] },
+        "catalog_id": { "type": ["string", "null"] },
+        "source": { "$ref": "#/$defs/source_ref" },
+        "migration": { "$ref": "#/$defs/migration" }
+      }
+    },
+    "attribute": {
+      "type": "object",
+      "required": ["id", "name", "data_type", "source"],
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "code": { "type": "string" },
+        "data_type": { "enum": ["text", "number", "boolean", "picklist", "multipicklist", "date", "other"] },
+        "values": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["value"],
+            "properties": {
+              "value": { "type": "string" },
+              "label": { "type": "string" },
+              "default": { "type": "boolean" }
+            }
+          }
+        },
+        "required": { "type": "boolean" },
+        "hidden": { "type": "boolean" },
+        "source": { "$ref": "#/$defs/source_ref" },
+        "migration": { "$ref": "#/$defs/migration" }
+      }
+    },
+    "product_attribute_assignment": {
+      "type": "object",
+      "required": ["attribute_id"],
+      "properties": {
+        "attribute_id": { "type": "string" },
+        "default_value": { "type": "string" },
+        "required": { "type": "boolean" },
+        "read_only": { "type": "boolean" },
+        "allowed_values": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "component": {
+      "type": "object",
+      "description": "Relación bundle → hijo (SBQQ ProductOption / EPC child item)",
+      "required": ["child_product_id", "source"],
+      "properties": {
+        "child_product_id": { "type": "string" },
+        "group": { "type": "string", "description": "Feature en SBQQ / grupo de componentes" },
+        "min_quantity": { "type": "number" },
+        "max_quantity": { "type": "number" },
+        "default_quantity": { "type": "number" },
+        "required": { "type": "boolean" },
+        "selected_by_default": { "type": "boolean" },
+        "sequence": { "type": "integer" },
+        "source": { "$ref": "#/$defs/source_ref" },
+        "migration": { "$ref": "#/$defs/migration" }
+      }
+    },
+    "product": {
+      "type": "object",
+      "required": ["id", "name", "type", "source"],
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "code": { "type": "string" },
+        "description": { "type": "string" },
+        "type": { "enum": ["simple", "bundle", "class", "other"] },
+        "active": { "type": "boolean" },
+        "family": { "type": "string" },
+        "category_ids": { "type": "array", "items": { "type": "string" } },
+        "attributes": { "type": "array", "items": { "$ref": "#/$defs/product_attribute_assignment" } },
+        "components": { "type": "array", "items": { "$ref": "#/$defs/component" } },
+        "selling_model": {
+          "enum": ["one_time", "recurring", "usage", "evergreen", "term", "unknown"],
+          "description": "Modelo de venta inferido del origen"
+        },
+        "billing_frequency": { "type": "string" },
+        "term_months": { "type": "integer" },
+        "custom_fields": { "type": "object", "description": "Campos custom del origen preservados" },
+        "source": { "$ref": "#/$defs/source_ref" },
+        "migration": { "$ref": "#/$defs/migration" }
+      }
+    },
+    "pricebook": {
+      "type": "object",
+      "required": ["id", "name", "source"],
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "active": { "type": "boolean" },
+        "is_standard": { "type": "boolean" },
+        "currency": { "type": "string" },
+        "source": { "$ref": "#/$defs/source_ref" },
+        "migration": { "$ref": "#/$defs/migration" }
+      }
+    },
+    "price": {
+      "type": "object",
+      "required": ["product_id", "pricebook_id", "amount", "source"],
+      "properties": {
+        "product_id": { "type": "string" },
+        "pricebook_id": { "type": "string" },
+        "amount": { "type": "number" },
+        "currency": { "type": "string" },
+        "charge_type": { "enum": ["one_time", "recurring", "usage", "unknown"] },
+        "frequency": { "type": "string" },
+        "tiers": {
+          "type": "array",
+          "description": "Escalados o descuentos por volumen",
+          "items": {
+            "type": "object",
+            "properties": {
+              "from_quantity": { "type": "number" },
+              "to_quantity": { "type": ["number", "null"] },
+              "amount": { "type": "number" },
+              "discount_percent": { "type": "number" }
+            }
+          }
+        },
+        "source": { "$ref": "#/$defs/source_ref" },
+        "migration": { "$ref": "#/$defs/migration" }
+      }
+    },
+    "rule": {
+      "type": "object",
+      "description": "Reglas de producto, precio o validación",
+      "required": ["id", "name", "rule_type", "source"],
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "rule_type": { "enum": ["configuration", "validation", "selection", "alert", "price", "discount", "eligibility", "other"] },
+        "description": { "type": "string" },
+        "conditions": { "type": "array", "items": { "type": "object" } },
+        "actions": { "type": "array", "items": { "type": "object" } },
+        "implemented_in": { "enum": ["declarative", "apex", "flow", "omniscript", "other"] },
+        "affected_product_ids": { "type": "array", "items": { "type": "string" } },
+        "source": { "$ref": "#/$defs/source_ref" },
+        "migration": { "$ref": "#/$defs/migration" }
+      }
+    },
+    "promotion": {
+      "type": "object",
+      "required": ["id", "name", "source"],
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "start_date": { "type": ["string", "null"], "format": "date" },
+        "end_date": { "type": ["string", "null"], "format": "date" },
+        "product_ids": { "type": "array", "items": { "type": "string" } },
+        "discount": { "type": "object" },
+        "source": { "$ref": "#/$defs/source_ref" },
+        "migration": { "$ref": "#/$defs/migration" }
+      }
+    },
+    "unmapped_item": {
+      "type": "object",
+      "required": ["id", "kind", "source"],
+      "properties": {
+        "id": { "type": "string" },
+        "kind": { "enum": ["apex_class", "apex_trigger", "flow", "omniscript", "flexcard", "orchestration_plan", "decomposition", "custom_object", "other"] },
+        "name": { "type": "string" },
+        "summary": { "type": "string", "description": "Resumen de qué hace, generado por el análisis" },
+        "related_ids": { "type": "array", "items": { "type": "string" } },
+        "code_path": { "type": "string", "description": "Ruta local al código o metadato original" },
+        "source": { "$ref": "#/$defs/source_ref" },
+        "migration": { "$ref": "#/$defs/migration" }
+      }
+    }
+  }
+}
