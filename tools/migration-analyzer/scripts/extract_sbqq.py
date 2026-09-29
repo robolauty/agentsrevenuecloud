@@ -27,8 +27,8 @@ import sys
 from pathlib import Path
 
 # Objetos SBQQ mínimos para un primer análisis de catálogo, precios y
-# bundles. Se puede ampliar (SBQQ__PriceRule__c, SBQQ__DiscountSchedule__c,
-# SBQQ__ProductRule__c...) en una segunda pasada, una vez validado el flujo.
+# bundles. Se puede ampliar (SBQQ__PriceRule__c, SBQQ__ProductRule__c...)
+# en una segunda pasada, una vez validado el flujo.
 OBJECTS = [
     {"name": "Product2", "bulk": False},
     {"name": "ProductCategory", "bulk": False},
@@ -37,6 +37,14 @@ OBJECTS = [
     {"name": "SBQQ__ProductOption__c", "bulk": True},
     {"name": "SBQQ__ProductFeature__c", "bulk": False},
     {"name": "SBQQ__ConfigurationAttribute__c", "bulk": False},
+    # Descuentos por volumen/tramo. El campo exacto que vincula un
+    # SBQQ__DiscountSchedule__c a un producto o PricebookEntry varía según
+    # cómo esté configurado cada org (algunos lo cuelgan del producto vía
+    # SBQQ__PricingMethod__c, otros vía un lookup custom) — se extrae todo
+    # y el vínculo se decide en adapt_sbqq_to_canonical.py / la revisión,
+    # no se asume un campo fijo aquí.
+    {"name": "SBQQ__DiscountSchedule__c", "bulk": False},
+    {"name": "SBQQ__DiscountTier__c", "bulk": False},
 ]
 
 # Campos a excluir siempre, aunque existan en el describe: metadatos de

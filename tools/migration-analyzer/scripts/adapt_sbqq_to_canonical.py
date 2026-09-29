@@ -161,6 +161,59 @@ def adapt_components(raw_dir):
     return components
 
 
+def adapt_discount_schedules(raw_dir):
+    """
+    SBQQ__DiscountSchedule__c + SBQQ__DiscountTier__c -> canonical 'rules'
+    (rule_type='discount'). No se intenta vincular automáticamente a un
+    producto o PricebookEntry concreto: el campo que hace ese enlace varía
+    de un org a otro (config declarativa distinta según el cliente), así
+    que se deja el registro completo (con sus tiers anidados) para que el
+    agente de migración decida el vínculo en la revisión. classify_gaps.py
+    ya marca todo 'rules' como 'review' siempre, así que esto no se pierde
+    silenciosamente.
+    """
+    tiers_by_schedule = {}
+    for tier in load(raw_dir, "SBQQ__DiscountTier__c"):
+        schedule_id = tier.get("SBQQ__DiscountSchedule__c")
+        if not schedule_id:
+            continue
+        tiers_by_schedule.setdefault(schedule_id, []).append(
+            {
+                "from_quantity": tier.get("SBQQ__LowerBound__c"),
+                "to_quantity": tier.get("SBQQ__UpperBound__c"),
+                "discount_percent": tier.get("SBQQ__Discount__c"),
+                "source_record_id": tier.get("Id"),
+            }
+        )
+
+    rules = []
+    for rec in load(raw_dir, "SBQQ__DiscountSchedule__c"):
+        rules.append(
+            {
+                "id": rec["Id"],
+                "name": rec.get("Name"),
+                "rule_type": "discount",
+                "description": (
+                    "SBQQ__DiscountSchedule__c con "
+                    f"{len(tiers_by_schedule.get(rec['Id'], []))} tramo(s). "
+                    "Vínculo a producto/PricebookEntry sin determinar "
+                    "automáticamente — resolver en la revisión."
+                ),
+                "conditions": tiers_by_schedule.get(rec["Id"], []),
+                "actions": [],
+                "implemented_in": "declarative",
+                "affected_product_ids": [],
+                "source": source_ref("SBQQ", "SBQQ__DiscountSchedule__c", rec),
+                "migration": pending_migration(
+                    "Determinar a qué producto(s)/PricebookEntry aplica este "
+                    "discount schedule y, si corresponde, volcar sus tramos "
+                    "en 'prices[].tiers' antes de generar la carga."
+                ),
+            }
+        )
+    return rules
+
+
 def merge_components_into_products(products, components):
     by_parent = {}
     for c in components:
@@ -188,6 +241,7 @@ def main():
     prices = adapt_prices(args.raw)
     components = adapt_components(args.raw)
     products = merge_components_into_products(products, components)
+    discount_rules = adapt_discount_schedules(args.raw)
 
     canonical = {
         "meta": {
@@ -203,7 +257,7 @@ def main():
         "products": products,
         "pricebooks": pricebooks,
         "prices": prices,
-        "rules": [],  # TODO: SBQQ__PriceRule__c, SBQQ__ProductRule__c
+        "rules": discount_rules,  # SBQQ__PriceRule__c / SBQQ__ProductRule__c: TODO
         "promotions": [],
         "unmapped": [],
     }
@@ -216,7 +270,8 @@ def main():
     print(
         f"Canónico escrito en {out_path}: "
         f"{len(products)} productos, {len(categories)} categorías, "
-        f"{len(pricebooks)} pricebooks, {len(prices)} precios."
+        f"{len(pricebooks)} pricebooks, {len(prices)} precios, "
+        f"{len(discount_rules)} discount schedules (-> rules, review)."
     )
 
 

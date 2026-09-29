@@ -64,10 +64,13 @@ python3 scripts/classify_gaps.py \
 
 # 6. Tras resolver review_queue.json (agente/humano) y marcar
 #    reviewed_by_human=true en canonical.classified.json, generar la carga
+#    (--include-price-adjustments si hay tramos de precio ya resueltos en
+#    prices[].tiers)
 python3 scripts/generate_load.py \
     --canonical output/cliente-sandbox/canonical.classified.json \
     --mapping config/load_mapping.json \
-    --out output/cliente-sandbox/load
+    --out output/cliente-sandbox/load \
+    --include-price-adjustments
 
 # 7. Solo contra sandbox
 sf data import tree --plan output/cliente-sandbox/load/plan.json --target-org cliente-sandbox
@@ -106,24 +109,30 @@ análisis — reduce el volumen a lo que de verdad requiere juicio.
 **`extract_sbqq.py`**
 - Extrae `Product2`, `ProductCategory`, `Pricebook2`, `PricebookEntry`,
   `SBQQ__ProductOption__c`, `SBQQ__ProductFeature__c`,
-  `SBQQ__ConfigurationAttribute__c`.
+  `SBQQ__ConfigurationAttribute__c`, `SBQQ__DiscountSchedule__c`,
+  `SBQQ__DiscountTier__c`.
 - Los campos por objeto salen del `describe`, no de una lista fija, así que
   incluye automáticamente los campos custom del cliente.
-- **No incluye todavía**: `SBQQ__PriceRule__c`, `SBQQ__DiscountSchedule__c`,
-  `SBQQ__ProductRule__c`, históricos de `Quote`/`Order`/`Contract`/`Asset`.
-  Se añaden ampliando la lista `OBJECTS` cuando el flujo básico esté
-  validado.
+- **No incluye todavía**: `SBQQ__PriceRule__c`, `SBQQ__ProductRule__c`,
+  históricos de `Quote`/`Order`/`Contract`/`Asset`. Se añaden ampliando la
+  lista `OBJECTS` cuando el flujo básico esté validado.
 
 **`adapt_sbqq_to_canonical.py`**
 - Mapea 1:1 lo simple: producto, categoría, pricebook, precio, y la
   relación bundle→componente de `SBQQ__ProductOption__c`.
+- `SBQQ__DiscountSchedule__c` + `SBQQ__DiscountTier__c` → `rules`
+  (`rule_type="discount"`), con los tramos anidados en `conditions`. **No**
+  intenta enlazar automáticamente el schedule a un producto o
+  `PricebookEntry`: ese campo de vínculo varía según cómo esté configurado
+  cada org, así que se deja para que el agente lo resuelva en la revisión
+  y, si corresponde, vuelque los tramos en `prices[].tiers` del elemento
+  correcto.
 - Marca todo con `migration.classification = "pending"` — este script no
   decide qué es `direct`/`transformable`/`redesign`, solo normaliza. Esa
   clasificación es el siguiente paso (análisis de gaps).
-- `attributes` y `rules` quedan vacíos: están marcados como TODO porque
-  requieren revisar `SBQQ__ConfigurationAttribute__c` y las reglas de
-  precio/producto, que mezclan configuración declarativa con lógica en
-  fórmulas o Apex.
+- `attributes` queda vacío: está marcado como TODO porque requiere revisar
+  `SBQQ__ConfigurationAttribute__c`, que mezcla configuración declarativa
+  con lógica en fórmulas.
 
 **`classify_gaps.py`**
 - Aplica las reglas de `docs/mapping-sbqq-rlm.md` (documento editable, no
@@ -168,6 +177,25 @@ análisis — reduce el volumen a lo que de verdad requiere juicio.
   `Product2`, `Pricebook2`, `PricebookEntry` y omitió correctamente el
   precio con `charge_type` desconocido, listándolo en `load_summary.md`.
 
+**`generate_load.py --include-price-adjustments`**
+- Con `--include-price-adjustments`, genera `PriceAdjustmentSchedule` (uno
+  por precio con `tiers`) + `PriceAdjustmentTier` (uno por tramo),
+  enlazados al `PricebookEntry` correspondiente por referencia.
+- Igual que los selling models: queda **siempre** marcado como "requiere
+  validación manual" en `load_summary.md`, porque el nombre de objeto y de
+  campos (`load_mapping.json`: `price_adjustment_schedule`,
+  `price_adjustment_tier`, ambos `"verify": true`) no está confirmado
+  contra un org real, y el tipo de tramo (`TieredExclusive` por defecto)
+  es una decisión funcional, no técnica.
+- Los tramos (`tiers`) no salen automáticamente de `adapt_sbqq_to_canonical.py`:
+  los discount schedules de SBQQ se capturan en `rules` sin enlazar (ver
+  arriba), así que hace falta que la revisión del agente/humano vuelque
+  los tramos correctos en `prices[].tiers` antes de que este flag tenga
+  algo que generar.
+- Verificado con datos sintéticos: 2 tramos generados correctamente,
+  referencias resueltas en cadena `PricebookEntry` → `PriceAdjustmentSchedule`
+  → `PriceAdjustmentTier`.
+
 ## Adaptador de Industries CPQ/EPC
 
 Todavía no implementado. Si el origen es Industries (`vlocity_cmt__`),
@@ -177,15 +205,18 @@ attributes vía JSON en vez de registros separados, OmniScripts para la
 configuración). Se añade como `extract_epc.py` +
 `adapt_epc_to_canonical.py` siguiendo el mismo patrón cuando haga falta.
 
-## Siguiente etapa: PriceAdjustmentSchedule y componentes de bundle
+## Siguiente etapa: componentes de bundle y atributos
 
-`generate_load.py` cubre catálogo básico y precio simple. Quedan fuera,
-como siguiente pieza a construir:
+`generate_load.py` cubre catálogo, precio simple y ahora tramos de precio
+(`--include-price-adjustments`). Quedan fuera, como siguiente pieza a
+construir:
 
-- Tramos de precio (`tiers` del canónico) → `PriceAdjustmentSchedule` /
-  `PriceAdjustmentTier`.
 - Componentes de bundle, una vez que el manifiesto de migración defina el
   agrupamiento en `ProductComponentGroup` (no hay forma determinista de
   generarlo sin esa decisión).
 - Atributos (`SBQQ__ConfigurationAttribute__c` → `AttributeDefinition`),
-  todavía no extraídos a fondo por `extract_sbqq.py`.
+  todavía no procesados por `adapt_sbqq_to_canonical.py` (sí extraídos por
+  `extract_sbqq.py`, pero `attributes` sigue vacío en el canónico).
+- Enlazar `SBQQ__DiscountSchedule__c` a producto/`PricebookEntry`
+  automáticamente cuando se confirme, con casos reales, cuál es el campo
+  de vínculo — hoy queda siempre en `rules` para revisión manual.

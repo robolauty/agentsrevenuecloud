@@ -159,6 +159,7 @@ def build_prices(canonical, mapping, product_refs, pricebook_refs, skipped):
     spec = mapping["price"]
     fields = spec["fields"]
     out = []
+    price_refs = {}
     for price in canonical.get("prices", []):
         price_id = f"{price.get('product_id')}::{price.get('pricebook_id')}"
         if not is_ready(price):
@@ -170,19 +171,96 @@ def build_prices(canonical, mapping, product_refs, pricebook_refs, skipped):
             skipped.append(
                 {
                     "kind": "price",
-                    "id": f"{price.get('product_id')}::{price.get('pricebook_id')}",
+                    "id": price_id,
                     "reason": "Producto o pricebook referenciado no está listo/cargado.",
                 }
             )
             continue
+        r = ref("price", f"{price.get('product_id')}_{price.get('pricebook_id')}")
+        price_refs[price_id] = r
         record = {
-            "_ref": ref("price", f"{price.get('product_id')}_{price.get('pricebook_id')}"),
+            "_ref": r,
             fields["product_ref"]: f"@{prod_ref}",
             fields["pricebook_ref"]: f"@{pb_ref}",
             fields["amount"]: price.get("amount"),
         }
         out.append(record)
-    return out, spec["object"]
+    return out, price_refs, spec["object"]
+
+
+def build_price_adjustments(canonical, mapping, price_refs, skipped):
+    """
+    Solo se llama con --include-price-adjustments. Genera
+    PriceAdjustmentSchedule (uno por precio con tiers) + PriceAdjustmentTier
+    (uno por tramo), enlazados al PricebookEntry ya generado.
+
+    Como con selling models, esto se marca SIEMPRE como pendiente de
+    validación manual: el objeto/campos de destino están sin confirmar
+    (ver "verify": true en load_mapping.json) y el tipo de tramo
+    (TieredExclusive/Inclusive/Block) es una decisión funcional que no se
+    puede inferir solo del canónico.
+    """
+    schedule_spec = mapping["price_adjustment_schedule"]
+    tier_spec = mapping["price_adjustment_tier"]
+    schedule_fields = schedule_spec["fields"]
+    tier_fields = tier_spec["fields"]
+    default_type = schedule_spec["default_values"]["type"]
+
+    schedules = []
+    tiers = []
+    needs_validation = []
+
+    for price in canonical.get("prices", []):
+        price_id = f"{price.get('product_id')}::{price.get('pricebook_id')}"
+        price_tiers = price.get("tiers") or []
+        if not price_tiers:
+            continue
+        price_ref = price_refs.get(price_id)
+        if not price_ref:
+            skipped.append(
+                {
+                    "kind": "price_adjustment_schedule",
+                    "id": price_id,
+                    "reason": "El PricebookEntry asociado no se generó "
+                    "(no listo/revisado) — sus tramos quedan sin cargar.",
+                }
+            )
+            continue
+
+        schedule_ref = ref("pas", price_id)
+        schedules.append(
+            {
+                "_ref": schedule_ref,
+                schedule_fields["name"]: f"Adjustment {price_id}",
+                schedule_fields["type"]: default_type,
+                schedule_fields["pricebook_entry_ref"]: f"@{price_ref}",
+            }
+        )
+
+        for i, t in enumerate(price_tiers, start=1):
+            tiers.append(
+                {
+                    "_ref": ref("pat", f"{price_id}_{i}"),
+                    tier_fields["schedule_ref"]: f"@{schedule_ref}",
+                    tier_fields["sequence"]: i,
+                    tier_fields["lower_bound"]: t.get("from_quantity"),
+                    tier_fields["upper_bound"]: t.get("to_quantity"),
+                    tier_fields["discount_percent"]: t.get("discount_percent"),
+                }
+            )
+
+        needs_validation.append(
+            {
+                "kind": "price_adjustment_schedule",
+                "id": price_id,
+                "reason": f"Generado tipo='{default_type}' con "
+                f"{len(price_tiers)} tramo(s) — confirmar objeto/campos "
+                "reales de Revenue Cloud (load_mapping.json: verify=true) "
+                "y el tipo de tramo con el cliente antes de cargar.",
+            }
+        )
+
+    return schedules, tiers, schedule_spec["object"], tier_spec["object"], needs_validation
 
 
 def build_selling_models(canonical, mapping, product_refs, skipped):
@@ -265,6 +343,12 @@ def main():
         action="store_true",
         help="Generar ProductSellingModel (requiere validación manual siempre).",
     )
+    parser.add_argument(
+        "--include-price-adjustments",
+        action="store_true",
+        help="Generar PriceAdjustmentSchedule/Tier para precios con tiers "
+        "(requiere validación manual siempre).",
+    )
     args = parser.parse_args()
 
     with open(args.canonical, encoding="utf-8") as f:
@@ -309,10 +393,26 @@ def main():
     if path:
         plan_entries.append({"sobject": pb_obj, "saveRefs": True, "resolveRefs": True, "files": [path.name]})
 
-    prices, price_obj = build_prices(canonical, mapping, product_refs, pricebook_refs, skipped)
+    prices, price_refs, price_obj = build_prices(
+        canonical, mapping, product_refs, pricebook_refs, skipped
+    )
+    # saveRefs=True: PriceAdjustmentSchedule (más abajo) referencia el
+    # PricebookEntry generado aquí.
     path = write_tree_file(out_dir, "06_PricebookEntry.json", price_obj, prices)
     if path:
-        plan_entries.append({"sobject": price_obj, "saveRefs": False, "resolveRefs": True, "files": [path.name]})
+        plan_entries.append({"sobject": price_obj, "saveRefs": True, "resolveRefs": True, "files": [path.name]})
+
+    price_adjustment_validation = []
+    if args.include_price_adjustments:
+        schedules, tiers, schedule_obj, tier_obj, price_adjustment_validation = build_price_adjustments(
+            canonical, mapping, price_refs, skipped
+        )
+        path = write_tree_file(out_dir, "07_PriceAdjustmentSchedule.json", schedule_obj, schedules)
+        if path:
+            plan_entries.append({"sobject": schedule_obj, "saveRefs": True, "resolveRefs": True, "files": [path.name]})
+        path = write_tree_file(out_dir, "08_PriceAdjustmentTier.json", tier_obj, tiers)
+        if path:
+            plan_entries.append({"sobject": tier_obj, "saveRefs": False, "resolveRefs": True, "files": [path.name]})
 
     plan_path = out_dir / "plan.json"
     with open(plan_path, "w", encoding="utf-8") as f:
@@ -327,9 +427,12 @@ def main():
             "ProductCategoryProduct": len(cat_assign),
             "Pricebook2": len(pricebooks),
             "PricebookEntry": len(prices),
+            **({"PriceAdjustmentSchedule": len(schedules), "PriceAdjustmentTier": len(tiers)}
+               if args.include_price_adjustments else {}),
         },
         skipped=skipped,
         selling_model_validation=selling_model_validation,
+        price_adjustment_validation=price_adjustment_validation,
     )
 
     print(f"Ficheros de carga en {out_dir}")
@@ -341,7 +444,9 @@ def main():
     )
 
 
-def _write_summary(path, canonical, counts, skipped, selling_model_validation):
+def _write_summary(
+    path, canonical, counts, skipped, selling_model_validation, price_adjustment_validation=None
+):
     org_alias = canonical.get("meta", {}).get("org_alias", "?")
     lines = [
         f"# Resumen de carga — {org_alias}",
@@ -382,6 +487,23 @@ def _write_summary(path, canonical, counts, skipped, selling_model_validation):
             "|---|---|",
         ]
         for v in selling_model_validation:
+            lines.append(f"| {v['id']} | {v['reason']} |")
+
+    if price_adjustment_validation:
+        lines += [
+            "",
+            "## PriceAdjustmentSchedule — requiere validación manual",
+            "",
+            "Generados a partir de `prices[].tiers` del canónico. El objeto "
+            "y los campos de destino no están confirmados contra Revenue "
+            "Cloud real (ver `\"verify\": true` en `load_mapping.json`), y "
+            "el tipo de tramo es una decisión funcional pendiente de "
+            "validar con el cliente:",
+            "",
+            "| Precio | Nota |",
+            "|---|---|",
+        ]
+        for v in price_adjustment_validation:
             lines.append(f"| {v['id']} | {v['reason']} |")
 
     lines += [

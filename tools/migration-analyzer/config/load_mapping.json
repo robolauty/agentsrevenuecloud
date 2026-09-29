@@ -80,6 +80,33 @@
     "_notes": "PricebookEntry en sí es estable. Los tramos de precio (tiers) NO se cargan aquí: van a PriceAdjustmentSchedule/PriceAdjustmentTier, fuera del alcance de este generador hasta validar esos objetos."
   },
 
+  "price_adjustment_schedule": {
+    "object": "PriceAdjustmentSchedule",
+    "verify": true,
+    "fields": {
+      "name": "Name",
+      "type": "Type",
+      "pricebook_entry_ref": "PricebookEntryId"
+    },
+    "default_values": {
+      "type": "TieredExclusive"
+    },
+    "_notes": "Nombre de objeto y del campo de vínculo a PricebookEntry (o a Product2/ProductSellingModel, según release) sin confirmar. En algunas versiones de Revenue Cloud el adjustment schedule cuelga del ProductSellingModel, no del PricebookEntry directamente — verificar contra el org destino antes de cargar. 'TieredExclusive' vs 'TieredInclusive' vs 'Block' es una decisión funcional, no técnica: confirmar con el cliente qué tipo de tramo usaba en SBQQ (SBQQ__DiscountSchedule__c.SBQQ__Type__c)."
+  },
+
+  "price_adjustment_tier": {
+    "object": "PriceAdjustmentTier",
+    "verify": true,
+    "fields": {
+      "schedule_ref": "PriceAdjustmentScheduleId",
+      "lower_bound": "LowerBound",
+      "upper_bound": "UpperBound",
+      "discount_percent": "AdjustmentPercent",
+      "sequence": "Sequence"
+    },
+    "_notes": "AdjustmentPercent es un nombre plausible pero no confirmado — puede ser AdjustmentValue con un AdjustmentType separado (porcentaje vs monto fijo) según la versión. Confirmar antes de cargar."
+  },
+
   "component": {
     "object": "ProductRelatedComponent",
     "verify": true,
